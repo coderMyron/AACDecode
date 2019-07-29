@@ -14,10 +14,12 @@ const uint32_t CONST_BUFFER_SIZE = 0x10000;
 @implementation AACPlayer
 
 {
+    //播放音频文件ID
     AudioFileID audioFileID; // An opaque data type that represents an audio file object.
+    //音频流描述对象
     AudioStreamBasicDescription audioStreamBasicDescrpition; // An audio data format specification for a stream of audio
     AudioStreamPacketDescription *audioStreamPacketDescrption; // Describes one packet in a buffer of audio data where the sizes of the packets differ or where there is non-audio data between audio packets.
-    
+    //音频队列
     AudioQueueRef audioQueue; // Defines an opaque data type that represents an audio queue.
     AudioQueueBufferRef audioBuffers[CONST_BUFFER_COUNT];
     
@@ -28,14 +30,15 @@ const uint32_t CONST_BUFFER_SIZE = 0x10000;
 
 - (instancetype)init {
     self = [super init];
-    [self customAudioConfig];
-    
+    if(self) {
+        [self customAudioConfig];
+    }
     return self;
 }
 
 - (void)customAudioConfig {
     NSURL *url = [[NSBundle mainBundle] URLForResource:@"AACFile" withExtension:@"aac"];
-    
+    //打开音频文件
     /**
      AudioFileOpenURL (
      CFURLRef inFileRef, // 打开文件的路径
@@ -50,6 +53,7 @@ const uint32_t CONST_BUFFER_SIZE = 0x10000;
         return ;
     }
     uint32_t size = sizeof(audioStreamBasicDescrpition);
+    //取得音频数据格式
     /**
      udioFileGetProperty(
      AudioFileID inAudioFile, //文件描述符，通过 AudioFileOpenURL 获取。
@@ -60,10 +64,10 @@ const uint32_t CONST_BUFFER_SIZE = 0x10000;
      */
     status = AudioFileGetProperty(audioFileID, kAudioFilePropertyDataFormat, &size, &audioStreamBasicDescrpition); // Gets the value of an audio file property.
     NSAssert(status == noErr, @"error");
-    
+    //创建播放用的音频队列
     status = AudioQueueNewOutput(&audioStreamBasicDescrpition, bufferReady, (__bridge void * _Nullable)(self), NULL, NULL, 0, &audioQueue); // Creates a new playback audio queue object.
     NSAssert(status == noErr, @"error");
-    
+    //计算单位时间包含的包数
     if (audioStreamBasicDescrpition.mBytesPerPacket == 0 || audioStreamBasicDescrpition.mFramesPerPacket == 0) {
         uint32_t maxSize;
         size = sizeof(maxSize);
@@ -71,6 +75,7 @@ const uint32_t CONST_BUFFER_SIZE = 0x10000;
         if (maxSize > CONST_BUFFER_SIZE) {
             maxSize = CONST_BUFFER_SIZE;
         }
+        //算出单位时间内含有的包数
         packetNums = CONST_BUFFER_SIZE / maxSize;
         audioStreamPacketDescrption = malloc(sizeof(AudioStreamPacketDescription) * packetNums);
     }
@@ -81,15 +86,23 @@ const uint32_t CONST_BUFFER_SIZE = 0x10000;
     
     char cookies[100];
     memset(cookies, 0, sizeof(cookies));
-    // 这里的100 有问题
+    //设置Magic Cookie
+    //AudioFileGetProperty(audioFile, kAudioFilePropertyMagicCookieData, &size, nil);
+    //if (size >0) {
+    //    cookie=malloc(sizeof(char)*size);
+    //    AudioFileGetProperty(audioFile, kAudioFilePropertyMagicCookieData, &size, cookie);
+    //    AudioQueueSetProperty(queue, kAudioQueueProperty_MagicCookie, cookie, size);
+    //}
+    //设置Magic Cookie 这里的100 有问题
     AudioFileGetProperty(audioFileID, kAudioFilePropertyMagicCookieData, &size, cookies); // Some file types require that a magic cookie be provided before packets can be written to an audio file.
     if (size > 0) {
         AudioQueueSetProperty(audioQueue, kAudioQueueProperty_MagicCookie, cookies, size); // Sets an audio queue property value.
     }
-    
+    //创建并分配缓冲空间
     readedPacket = 0;
     for (int i = 0; i < CONST_BUFFER_COUNT; ++i) {
         AudioQueueAllocateBuffer(audioQueue, CONST_BUFFER_SIZE, &audioBuffers[i]); // Asks an audio queue object to allocate an audio queue buffer.
+        //读取包数据
         if ([self fillBuffer:audioBuffers[i]]) {
             // full
             break;
@@ -114,7 +127,9 @@ void bufferReady(void *inUserData,AudioQueueRef inAQ,
 
 
 - (void)play {
+    //设置音量
     AudioQueueSetParameter(audioQueue, kAudioQueueParam_Volume, 1.0); // Sets a playback audio queue parameter value.
+    //队列处理开始，此后系统开始自动调用回调(Callback)函数
     AudioQueueStart(audioQueue, NULL); // Begins playing or recording audio.
 }
 
@@ -122,6 +137,7 @@ void bufferReady(void *inUserData,AudioQueueRef inAQ,
 - (bool)fillBuffer:(AudioQueueBufferRef)buffer {
     bool full = NO;
     uint32_t bytes = 0, packets = (uint32_t)packetNums;
+    //从文件中接受数据并保存到缓存(buffer)中
     /**
      AudioFileReadPacketData (
         AudioFileID inAudioFile, // 文件描述符
